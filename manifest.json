@@ -1,0 +1,24 @@
+{
+  "name": "Sistema de Exames - Família",
+  "short_name": "Exames Família",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#3b82f6",
+  "theme_color": "#2563eb",
+  "orientation": "portrait",
+  "scope": "/",
+  "lang": "pt-BR",
+  "description": "Sistema para armazenar, comparar e analisar exames laboratoriais da família",
+  "icons": [
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
