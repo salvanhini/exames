@@ -45,7 +45,7 @@ const Gemini = {
         }
     },
 
-    PROMPT_SISTEMA = `Você é um assistente especializado em análise de exames laboratoriais brasileiros.
+    PROMPT_SISTEMA: `Você é um assistente especializado em análise de exames laboratoriais brasileiros.
 
 Analise o PDF do exame e extraia TODAS as informações de exames encontradas.
 

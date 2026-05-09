@@ -170,7 +170,7 @@ const app = {
         for (const [param, exame] of Object.entries(ultimosExames)) {
             const ref = config.obterReferencia(exame.categoria, exame.parametro, membro.sexo);
             if (ref && this.isForaReferencia(exame.valor, ref)) {
-                alertas.push({ parametro: exame.parametro, valor: exame.valor, referencia: ref });
+                alertas.push({ parametro: this.obterNomeParametro(exame.categoria, exame.parametro), valor: exame.valor, referencia: ref });
             }
         }
 
@@ -280,7 +280,7 @@ const app = {
                             <tr class="hover:bg-surface-50 dark:hover:bg-surface-700/20 transition-colors duration-150">
                                 <td class="px-4 py-3 text-surface-600 dark:text-surface-400">${this.formatarData(e.data)}</td>
                                 <td class="px-4 py-3 font-medium">${membro?.nome || 'N/A'}</td>
-                                <td class="px-4 py-3">${e.parametro}</td>
+                                <td class="px-4 py-3">${this.obterNomeParametro(e.categoria, e.parametro)}</td>
                                 <td class="px-4 py-3 font-bold ${this.getStatusClasse(e.valor, ref)}">${e.valor}</td>
                                 <td class="px-4 py-3">${this.getStatusBadge(e.valor, ref)}</td>
                                 <td class="px-4 py-3 text-surface-500 dark:text-surface-400">${e.laboratorio || '-'}</td>
@@ -354,7 +354,7 @@ carregarParametros() {
         const dataExame = document.getElementById('ex-data').value;
         const laboratorio = document.getElementById('ex-laboratorio').value;
 
-        if (!membroId || !categoria || !parametro || !valor || !dataExame) {
+        if (!membroId || !categoria || !parametro || (!valor && valor !== 0) || !dataExame) {
             this.showToast('Preencha todos os campos obrigatórios', 'error');
             return;
         }
@@ -391,11 +391,18 @@ carregarParametros() {
         this.showToast('Membro removido!');
     },
 
-    // IA - Análise de PDF com Gemini
+    // IA - Análise de PDF/TXT com Gemini ou DeepSeek
     verificarEAnalisarPDF() {
-        if (!Gemini.hasApiKey()) {
+        const provider = document.getElementById('ia-provider')?.value || 'gemini';
+        this.iaProviderAtual = provider;
+        const servico = provider === 'deepseek' ? DeepSeek : Gemini;
+
+        if (!servico.hasApiKey()) {
+            const nome = provider === 'deepseek' ? 'DeepSeek' : 'Gemini';
             document.getElementById('modal-api-key').classList.remove('hidden');
             document.getElementById('modal-api-key').classList.add('flex');
+            document.getElementById('modal-api-key-title').textContent = `Chave da API ${nome}`;
+            document.getElementById('input-api-key').placeholder = `Cole sua chave API do ${nome} aqui`;
             document.getElementById('input-api-key').value = '';
             document.getElementById('input-api-key').focus();
         } else {
@@ -405,11 +412,17 @@ carregarParametros() {
 
     salvarApiKey() {
         const key = document.getElementById('input-api-key').value.trim();
-        if (!key || !key.startsWith('AIza')) {
-            this.showToast('Chave inválida. Deve começar com "AIza..."', 'error');
+        const provider = this.iaProviderAtual || document.getElementById('ia-provider')?.value || 'gemini';
+        if (!key) {
+            this.showToast('Informe a chave da API', 'error');
             return;
         }
-        Gemini.setApiKey(key);
+        if (provider === 'gemini' && !key.startsWith('AIza')) {
+            this.showToast('Chave Gemini inválida. Deve começar com "AIza..."', 'error');
+            return;
+        }
+        if (provider === 'deepseek') DeepSeek.setApiKey(key);
+        else Gemini.setApiKey(key);
         this.fecharModalApiKey();
         this.showToast('Chave salva! Selecione o PDF do exame.');
         document.getElementById('pdf-exame-input').click();
@@ -424,10 +437,15 @@ carregarParametros() {
         const file = input.files[0];
         if (!file) return;
 
-        this.mostrarLoading(true, 'Analisando exame com IA...');
+        const provider = this.iaProviderAtual || document.getElementById('ia-provider')?.value || 'gemini';
+        const nome = provider === 'deepseek' ? 'DeepSeek' : 'Gemini';
+        this.mostrarLoading(true, `Analisando exame com ${nome}...`);
 
         try {
-            const resultado = await Gemini.analisarPDF(file);
+            const resultado = provider === 'deepseek'
+                ? await DeepSeek.analisarArquivo(file)
+                : await Gemini.analisarPDF(file);
+            resultado._provider = provider;
             this.mostrarResultadoIA(resultado);
         } catch (err) {
             this.showToast('Erro na análise: ' + err.message.substring(0, 100), 'error');
@@ -457,6 +475,21 @@ carregarParametros() {
             membros.push(...m);
 
             let html = '';
+            const categorias = config.obterCategorias();
+            const examesMapeados = (resultado.exames || []).map(exame => {
+                const mapeado = Gemini.mapearExame(exame);
+                const categoriaValida = categorias.some(c => c.id === mapeado.categoria);
+                const categoria = categoriaValida ? mapeado.categoria : '';
+                const parametroValido = categoria
+                    ? config.obterParametros(categoria).some(p => p.id === mapeado.parametro_id)
+                    : false;
+                return {
+                    ...exame,
+                    _categoriaSugerida: categoria,
+                    _parametroSugerido: parametroValido ? mapeado.parametro_id : ''
+                };
+            });
+            resultado.exames = examesMapeados;
 
             // Informações do paciente
             html += `
@@ -498,7 +531,16 @@ carregarParametros() {
                             <tbody class="divide-y divide-surface-100 dark:divide-surface-700/50">
                                 ${resultado.exames.map((exame, idx) => `
                                     <tr class="hover:bg-surface-50 dark:hover:bg-surface-700/20 transition-colors">
-                                        <td class="px-3 py-2 font-medium">${exame.parametro || exame.categoria || '?'}</td>
+                                        <td class="px-3 py-2">
+                                            <div class="font-medium">${exame.parametro || exame.categoria || '?'}</div>
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                                                <select id="ia-categoria-${idx}" class="input-field py-1 px-2 text-xs" onchange="app.atualizarParametrosIA(${idx})">
+                                                    <option value="">Categoria</option>
+                                                    ${categorias.map(c => `<option value="${c.id}" ${c.id === exame._categoriaSugerida ? 'selected' : ''}>${c.nome}</option>`).join('')}
+                                                </select>
+                                                <select id="ia-parametro-${idx}" class="input-field py-1 px-2 text-xs"></select>
+                                            </div>
+                                        </td>
                                         <td class="px-3 py-2">
                                             <input type="number" step="any" value="${exame.valor !== null && exame.valor !== undefined ? exame.valor : ''}" 
                                                 class="input-field py-1 px-2 text-sm w-24" id="ia-valor-${idx}" 
@@ -521,10 +563,30 @@ carregarParametros() {
             }
 
             container.innerHTML = html;
+            resultado.exames.forEach((exame, idx) => {
+                this.atualizarParametrosIA(idx, exame._parametroSugerido);
+            });
             document.getElementById('confirmacao-status').textContent = `${resultado.exames?.length || 0} parâmetros extraídos — desmarque os que não quiser salvar`;
             document.getElementById('modal-confirmacao-ia').classList.remove('hidden');
             document.getElementById('modal-confirmacao-ia').classList.add('flex');
         });
+    },
+
+    atualizarParametrosIA(idx, selecionado = '') {
+        const categoria = document.getElementById(`ia-categoria-${idx}`)?.value;
+        const select = document.getElementById(`ia-parametro-${idx}`);
+        if (!select) return;
+
+        if (!categoria) {
+            select.innerHTML = '<option value="">Parâmetro</option>';
+            return;
+        }
+
+        const parametros = config.obterParametros(categoria);
+        select.innerHTML = '<option value="">Parâmetro</option>' + parametros.map(p => {
+            const unidade = p.unidade ? ` (${p.unidade})` : '';
+            return `<option value="${p.id}" ${p.id === selecionado ? 'selected' : ''}>${p.nome}${unidade}</option>`;
+        }).join('');
     },
 
     fecharModalConfirmacao() {
@@ -550,6 +612,10 @@ carregarParametros() {
             this.showToast('Selecione o paciente', 'error');
             return;
         }
+        if (!dataExame) {
+            this.showToast('Informe a data do exame', 'error');
+            return;
+        }
 
         let salvos = 0;
         for (let i = 0; i < resultado.exames.length; i++) {
@@ -561,14 +627,14 @@ carregarParametros() {
             const valor = valorInput ? parseFloat(valorInput.value) : exame.valor;
             if (!valor && valor !== 0) continue;
 
-            // Mapear para nossas categorias
-            const mapeado = Gemini.mapearExame(exame);
-            const categoria = mapeado.categoria || exame.categoria || 'outros';
+            const categoria = document.getElementById(`ia-categoria-${i}`)?.value;
+            const parametro = document.getElementById(`ia-parametro-${i}`)?.value;
+            if (!categoria || !parametro) continue;
 
             await data.addExame({
                 membroId,
                 categoria,
-                parametro: exame.parametro,
+                parametro,
                 valor,
                 data: dataExame,
                 laboratorio
@@ -1002,7 +1068,7 @@ carregarParametros() {
                                 ${dadosRelatorio.exames.map(e => `
                                     <tr class="${e.fora ? 'bg-red-50 dark:bg-red-500/5' : ''}">
                                         <td class="px-2 py-1">${e.data}</td>
-                                        <td class="px-2 py-1 font-medium">${e.parametro}</td>
+                                        <td class="px-2 py-1 font-medium">${this.obterNomeParametro(e.categoria, e.parametro)}</td>
                                         <td class="px-2 py-1 font-bold ${e.fora ? 'text-red-600' : ''}">${e.valor}</td>
                                         <td class="px-2 py-1 text-xs text-surface-500">${e.referencia || '—'}</td>
                                     </tr>
@@ -1062,38 +1128,48 @@ carregarParametros() {
             `;
         }).join('');
 
-        // Carregar status da API Gemini
-        this.atualizarStatusGemini();
+        // Carregar status das APIs de IA
+        this.atualizarStatusIA();
     },
 
-    atualizarStatusGemini() {
-        const keyInput = document.getElementById('config-gemini-key');
-        const statusDiv = document.getElementById('config-gemini-status');
-        if (keyInput && Gemini.hasApiKey()) {
-            const key = Gemini.getApiKey();
-            keyInput.value = key;
+    atualizarStatusIA() {
+        this.atualizarStatusProvedorIA('gemini', Gemini);
+        this.atualizarStatusProvedorIA('deepseek', DeepSeek);
+    },
+
+    atualizarStatusProvedorIA(provider, servico) {
+        const keyInput = document.getElementById(`config-${provider}-key`);
+        const statusDiv = document.getElementById(`config-${provider}-status`);
+        if (keyInput && servico.hasApiKey()) {
+            keyInput.value = servico.getApiKey();
             statusDiv.innerHTML = '<span class="text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Chave configurada</span>';
         } else if (statusDiv) {
             statusDiv.innerHTML = '<span class="text-amber-600 dark:text-amber-400 text-xs flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg> Nenhuma chave configurada</span>';
         }
     },
 
-    salvarApiKeyConfig() {
-        const input = document.getElementById('config-gemini-key');
+    salvarApiKeyConfig(provider = 'gemini') {
+        const input = document.getElementById(`config-${provider}-key`);
         const key = input.value.trim();
-        if (!key || !key.startsWith('AIza')) {
-            this.showToast('Chave inválida. Deve começar com "AIza..."', 'error');
+        if (!key) {
+            this.showToast('Informe a chave da API', 'error');
             return;
         }
-        Gemini.setApiKey(key);
-        this.atualizarStatusGemini();
-        this.showToast('Chave da API Gemini salva!');
+        if (provider === 'gemini' && !key.startsWith('AIza')) {
+            this.showToast('Chave Gemini inválida. Deve começar com "AIza..."', 'error');
+            return;
+        }
+        if (provider === 'deepseek') DeepSeek.setApiKey(key);
+        else Gemini.setApiKey(key);
+        this.atualizarStatusIA();
+        this.showToast(`Chave da API ${provider === 'deepseek' ? 'DeepSeek' : 'Gemini'} salva!`);
     },
 
-    limparApiKeyConfig() {
-        Gemini.clearApiKey();
-        document.getElementById('config-gemini-key').value = '';
-        this.atualizarStatusGemini();
+    limparApiKeyConfig(provider = 'gemini') {
+        if (provider === 'deepseek') DeepSeek.clearApiKey();
+        else Gemini.clearApiKey();
+        document.getElementById(`config-${provider}-key`).value = '';
+        this.atualizarStatusIA();
         this.showToast('Chave removida');
     },
 
@@ -1171,6 +1247,11 @@ carregarParametros() {
         return `${dia}/${mes}/${ano}`;
     },
 
+    obterNomeParametro(categoriaId, parametroId) {
+        const param = config.obterParametros(categoriaId).find(p => p.id === parametroId);
+        return param ? param.nome : parametroId;
+    },
+
     showToast(mensagem, tipo = 'success') {
         const toast = document.createElement('div');
         toast.className = `fixed bottom-4 right-4 z-50 px-6 py-3 rounded-xl shadow-2xl transform transition-all duration-300 translate-y-0 opacity-100 ${
@@ -1196,7 +1277,7 @@ carregarParametros() {
     },
 
     isForaReferencia(valor, referencia) {
-        if (!referencia || !valor) return false;
+        if (!referencia || (!valor && valor !== 0)) return false;
 
         // Verificar se a referência tem formato "min-max"
         let min, max;
