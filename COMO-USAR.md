@@ -27,6 +27,16 @@
    - **Laboratório**: opcional
 4. Clique **"Salvar Exame"**
 
+### 3.1️⃣ Importar Exames com IA
+1. Vá em **"Configurações"**
+2. Em **"Inteligência Artificial"**, salve sua chave do **Gemini** e/ou **DeepSeek**
+3. Vá em **"Exames"**
+4. Escolha o provedor no seletor **IA**:
+   - **Gemini**: recomendado para PDF, pois lê o arquivo diretamente
+   - **DeepSeek**: usa o texto extraído do PDF ou um arquivo TXT
+5. Clique **"Analisar com IA"** e selecione o arquivo
+6. Confira categoria, parâmetro, valor, data e laboratório antes de salvar
+
 ### 4️⃣ Ver Dashboard
 1. Volte em **"Família"**
 2. Clique em **"Selecionar"** no membro desejado
